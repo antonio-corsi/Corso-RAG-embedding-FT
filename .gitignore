@@ -1,0 +1,33 @@
+.env
+.ipynb_checkpoints/rag di datapizza-checkpoint.ipynb
+.ipynb_checkpoints/Introduzione_RAG-checkpoint.ipynb
+.ipynb_checkpoints/RAG_ricette-checkpoint.ipynb
+.ipynb_checkpoints/Untitled-checkpoint.ipynb
+all-miniLM-L6-v2.pptx
+anam/server.py
+anam/server_rerank.py
+avatar_anam/__pycache__/server.cpython-311.pyc
+avatar_anam/server.log
+avatar_anam/server.py
+avatar_anam/static/index.html
+cfr_metriche.pptx
+Demo RAG testuale - parte I.mkv
+Demo RAG testuale - parte I.mp4
+Demo RAG testuale - parte II.mkv
+Demo RAG testuale - parte II.mp4
+Embedding.pptx
+embedding_ranges.pptx
+Fine-tuning.pptx
+FineTuning con Azure Foundry (lab AI-3016).pptx
+HF_model_hub.pptx
+Introduzione a RAG con Azure OpenAI.pptx
+LLM & RAG.pptx
+MSLEARN su Fine Tuning.docx
+numpy_limiti.pptx
+package_pip_rag
+prova_file_python.py
+RAG - definizione.pptx
+RAG - un'implementazione con Azure OpenAI e LangChain.ipynb
+*.pptx
+rag di datapizza.ipynb
+word_embedding.mp4

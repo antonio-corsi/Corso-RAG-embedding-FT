@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sportello virtuale — Avatar Anam + RAG</title>
+  <style>
+    :root {
+      --blu: #0d3b66; --blu-scuro: #082743; --acceso: #1d7a5f;
+      --carta: #ffffff; --fondo: #eef2f6; --testo: #1f2a37; --muto: #64748b;
+      --rosso: #b3261e; --ambra: #b45309;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; background: var(--fondo); color: var(--testo);
+      font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    }
+    header {
+      background: var(--blu); color: #fff; padding: 14px 28px;
+      display: flex; align-items: baseline; gap: 14px;
+    }
+    header h1 { margin: 0; font-size: 1.15rem; font-weight: 600; letter-spacing: .02em; }
+    header span { font-size: .8rem; opacity: .75; }
+    main {
+      max-width: 1060px; margin: 24px auto; padding: 0 20px;
+      display: grid; grid-template-columns: 420px 1fr; gap: 20px;
+    }
+    @media (max-width: 860px) { main { grid-template-columns: 1fr; } }
+    .pannello {
+      background: var(--carta); border-radius: 10px; padding: 18px;
+      box-shadow: 0 1px 3px rgba(13,59,102,.12);
+    }
+    video {
+      width: 100%; aspect-ratio: 3/4; background: var(--blu-scuro);
+      border-radius: 8px; display: block; object-fit: cover;
+    }
+    .stato {
+      display: inline-flex; align-items: center; gap: 8px;
+      margin: 14px 0 10px; padding: 5px 12px; border-radius: 999px;
+      font-size: .82rem; font-weight: 600; background: #f1f5f9; color: var(--muto);
+    }
+    .stato::before {
+      content: ""; width: 9px; height: 9px; border-radius: 50%;
+      background: currentColor;
+    }
+    .stato.connesso { background: #e6f4ef; color: var(--acceso); }
+    .stato.attesa   { background: #fef3e2; color: var(--ambra); }
+    .stato.errore   { background: #fdebea; color: var(--rosso); }
+    button {
+      border: none; border-radius: 6px; padding: 10px 18px; font-size: .9rem;
+      font-weight: 600; cursor: pointer; margin-right: 8px;
+    }
+    button:disabled { opacity: .45; cursor: default; }
+    #avvia  { background: var(--blu); color: #fff; }
+    #ferma  { background: #e2e8f0; color: var(--testo); }
+    h2 { margin: 0 0 12px; font-size: 1rem; color: var(--blu); }
+    #trascrizione {
+      height: 470px; overflow-y: auto; padding: 12px;
+      border: 1px solid #e2e8f0; border-radius: 8px; background: #fafbfc;
+      font-size: .92rem; line-height: 1.45;
+    }
+    .msg { margin-bottom: 10px; padding: 8px 12px; border-radius: 8px; max-width: 88%; }
+    .msg.utente { background: #e8eef7; margin-left: auto; }
+    .msg.avatar { background: #e9f3ef; }
+    .msg b { color: var(--blu); }
+    .vuoto { color: var(--muto); font-style: italic; text-align: center; margin-top: 40px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Sportello virtuale</h1>
+    <span>demo didattica — Anam (Pattern custom LLM) + RAG su Qdrant</span>
+  </header>
+
+  <main>
+    <!-- Pannello avatar -->
+    <div class="pannello">
+      <video id="persona-video" autoplay playsinline></video>
+      <div id="stato" class="stato">Pronto a connettersi</div>
+      <div>
+        <button id="avvia">Avvia conversazione</button>
+        <button id="ferma" disabled>Termina</button>
+      </div>
+    </div>
+
+    <!-- Pannello trascrizione -->
+    <div class="pannello">
+      <h2>Trascrizione</h2>
+      <div id="trascrizione">
+        <div class="vuoto">Avvia la conversazione e parla al microfono…</div>
+      </div>
+    </div>
+  </main>
+
+  <script type="module">
+    import { createClient } from "https://esm.sh/@anam-ai/js-sdk@latest";
+    import { AnamEvent } from "https://esm.sh/@anam-ai/js-sdk@latest/dist/module/types";
+
+    let anamClient = null;
+    let abortCorrente = null;        // per annullare la fetch se l'utente interrompe
+    let ultimoTurnoElaborato = "";   // guardia anti-doppione su MESSAGE_HISTORY_UPDATED
+
+    const $ = (id) => document.getElementById(id);
+    const statoEl = $("stato"), trascrEl = $("trascrizione");
+    const btnAvvia = $("avvia"), btnFerma = $("ferma");
+
+    function setStato(testo, classe = "") {
+      statoEl.textContent = testo;
+      statoEl.className = "stato " + classe;
+    }
+
+    function mostraTrascrizione(messaggi) {
+      if (!messaggi.length) {
+        trascrEl.innerHTML = '<div class="vuoto">Avvia la conversazione e parla al microfono…</div>';
+        return;
+      }
+      trascrEl.innerHTML = "";
+      for (const m of messaggi) {
+        const div = document.createElement("div");
+        const utente = m.role === "user";
+        div.className = "msg " + (utente ? "utente" : "avatar");
+        div.innerHTML = `<b>${utente ? "Tu" : "Sofia"}:</b> ${m.content}`;
+        trascrEl.appendChild(div);
+      }
+      trascrEl.scrollTop = trascrEl.scrollHeight;
+    }
+
+    // ================================================================
+    // Il cuore del Pattern B: quando l'utente finisce di parlare,
+    // Anam emette MESSAGE_HISTORY_UPDATED con la storia completa.
+    // Noi: 1) chiamiamo il backend RAG  2) inoltriamo lo stream all'avatar.
+    // ================================================================
+    async function gestisciTurnoUtente(storia) {
+      if (!anamClient || !storia.length) return;
+
+      const ultimo = storia[storia.length - 1];
+      if (ultimo.role !== "user") return;                 // reagiamo solo ai turni utente
+
+      const chiaveTurno = storia.length + "|" + ultimo.content;
+      if (chiaveTurno === ultimoTurnoElaborato) return;   // evento duplicato → ignora
+      ultimoTurnoElaborato = chiaveTurno;
+
+      // Formato {role, content} atteso dal backend (ruoli già OpenAI-compatibili)
+      const messaggi = storia.map((m) => ({
+        role: m.role === "user" ? "user" : "assistant",
+        content: m.content,
+      }));
+
+      const talkStream = anamClient.createTalkMessageStream();
+      abortCorrente = new AbortController();
+      setStato("Sofia sta rispondendo…", "attesa");
+
+      try {
+        const resp = await fetch("/api/rag-stream", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ messages: messaggi }),
+          signal: abortCorrente.signal,
+        });
+        if (!resp.ok) throw new Error("Backend RAG: HTTP " + resp.status);
+
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          for (const riga of decoder.decode(value).split("\n")) {
+            if (!riga.trim()) continue;
+            try {
+              const dato = JSON.parse(riga);
+              if (dato.content && talkStream.isActive()) {
+                talkStream.streamMessageChunk(dato.content, false);
+              }
+            } catch { /* chunk parziale: ignora */ }
+          }
+        }
+        if (talkStream.isActive()) talkStream.endMessage();
+        setStato("In ascolto", "connesso");
+      } catch (err) {
+        if (err.name === "AbortError") return;   // interrotto dall'utente: ok
+        console.error("Errore pipeline RAG:", err);
+        setStato("Errore backend — riprova", "errore");
+        anamClient.talk("Mi scusi, ho avuto un problema tecnico. Può ripetere la domanda?");
+      } finally {
+        abortCorrente = null;
+      }
+    }
+
+    async function avvia() {
+      try {
+        btnAvvia.disabled = true;
+        setStato("Connessione in corso…", "attesa");
+
+        const r = await fetch("/api/session-token", { method: "POST" });
+        if (!r.ok) throw new Error("session token non ottenuto");
+        const { sessionToken } = await r.json();
+
+        anamClient = createClient(sessionToken);
+
+        anamClient.addListener(AnamEvent.SESSION_READY, () => {
+          setStato("In ascolto", "connesso");
+          btnFerma.disabled = false;
+          anamClient.talk("Buongiorno, sono Sofia, l'assistente virtuale della banca. Come posso aiutarla?");
+        });
+
+        anamClient.addListener(AnamEvent.MESSAGE_HISTORY_UPDATED, (storia) => {
+          mostraTrascrizione(storia);
+          gestisciTurnoUtente(storia);
+        });
+
+        // L'utente ha interrotto l'avatar mentre parlava:
+        // fermiamo anche la generazione lato backend (niente token sprecati)
+        anamClient.addListener(AnamEvent.TALK_STREAM_INTERRUPTED, () => {
+          if (abortCorrente) abortCorrente.abort();
+          setStato("In ascolto", "connesso");
+        });
+
+        anamClient.addListener(AnamEvent.CONNECTION_CLOSED, ferma);
+
+        await anamClient.streamToVideoElement("persona-video");
+      } catch (err) {
+        console.error(err);
+        setStato("Connessione fallita: " + err.message, "errore");
+        btnAvvia.disabled = false;
+      }
+    }
+
+    function ferma() {
+      if (abortCorrente) abortCorrente.abort();
+      if (anamClient) { anamClient.stopStreaming(); anamClient = null; }
+      $("persona-video").srcObject = null;
+      ultimoTurnoElaborato = "";
+      mostraTrascrizione([]);
+      setStato("Disconnesso");
+      btnAvvia.disabled = false;
+      btnFerma.disabled = true;
+    }
+
+    btnAvvia.addEventListener("click", avvia);
+    btnFerma.addEventListener("click", ferma);
+    window.addEventListener("beforeunload", ferma);
+  </script>
+</body>
+</html>
