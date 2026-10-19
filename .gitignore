@@ -31,3 +31,5 @@ RAG - un'implementazione con Azure OpenAI e LangChain.ipynb
 *.pptx
 rag di datapizza.ipynb
 word_embedding.mp4
+chroma_immagini/c6e3d546-d305-49f0-9d32-e0c90e3e8519/header.bin
+*.bin
